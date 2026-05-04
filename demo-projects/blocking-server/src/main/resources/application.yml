@@ -1,0 +1,8 @@
+server:
+  port: 8081
+  # Default Tomcat: 200 threads. That's the real-world config.
+  # Difference shows when requests > 200.
+
+spring:
+  application:
+    name: blocking-server
