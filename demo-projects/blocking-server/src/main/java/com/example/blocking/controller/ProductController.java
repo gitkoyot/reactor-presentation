@@ -12,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.math.BigDecimal;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -40,7 +41,7 @@ public class ProductController {
         return new Product(
                 id,
                 "Product " + id,
-                99.99 * id,
+                BigDecimal.valueOf(10.0 + id),
                 "Description for product " + id
         );
     }
@@ -61,7 +62,7 @@ public class ProductController {
             products.add(new Product(
                     (long) i,
                     "Product " + i,
-                    99.99 * i,
+                    BigDecimal.valueOf(10.0 + i),
                     "Description for product " + i
             ));
         }
@@ -100,7 +101,7 @@ public class ProductController {
             Product product = new Product(
                     (long) i,
                     "Product " + i,
-                    99.99 * i,
+                    BigDecimal.valueOf(10.0 + i),
                     "Description for product " + i
             );
 

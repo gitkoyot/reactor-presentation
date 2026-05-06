@@ -5,3 +5,8 @@ dependencies {
     testImplementation("io.projectreactor:reactor-test")
     testImplementation("org.junit.platform:junit-platform-launcher")
 }
+
+tasks.test {
+    jvmArgs = listOf("-XX:+AllowRedefinitionToAddDeleteMethods")
+}
+

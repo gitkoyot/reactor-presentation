@@ -2,11 +2,15 @@ package com.example.reactive;
 
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
+import reactor.tools.agent.ReactorDebugAgent;
 
 @SpringBootApplication
 public class ReactiveServerApplication {
 
     public static void main(String[] args) {
+        // Production-safe enhanced stack traces (bytecode instrumentation, negligible overhead)
+        ReactorDebugAgent.init();
+
         // Limit Netty event-loop threads to 4 for demo purposes
         // (default = Runtime.availableProcessors(), which can be 16-32 on modern CPUs)
         System.setProperty("reactor.netty.ioWorkerCount", "4");
