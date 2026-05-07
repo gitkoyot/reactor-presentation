@@ -5,7 +5,7 @@ Presentation and live demo projects comparing Spring MVC (blocking) with Spring 
 ## Repository Structure
 
 ```
-├── WebFlux-Reactive-vs-Blocking.pptx   # Slide deck (32 slides)
+├── WebFlux-Reactive-vs-Blocking.pptx   # Slide deck (33 slides)
 └── demo-projects/                       # Gradle multi-module project (Java 21)
     ├── blocking-server   :8081          # Spring MVC + Tomcat (200 threads)
     ├── reactive-server   :8082          # Spring WebFlux + Netty (4 event-loop threads)
