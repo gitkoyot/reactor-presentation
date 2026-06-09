@@ -27,12 +27,6 @@ subprojects {
         annotationProcessor("org.projectlombok:lombok")
         testCompileOnly("org.projectlombok:lombok")
         testAnnotationProcessor("org.projectlombok:lombok")
-
-        // Reactor tools — better stack traces in production (no perf cost)
-        implementation("io.projectreactor:reactor-tools")
-
-        // BlockHound — detects blocking calls on non-blocking threads
-        testImplementation("io.projectreactor.tools:blockhound:1.0.9.RELEASE")
     }
 
     tasks.withType<Test> {

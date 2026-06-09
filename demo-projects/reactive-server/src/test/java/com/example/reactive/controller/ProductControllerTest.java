@@ -7,11 +7,12 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.reactive.WebFluxTest;
 import org.springframework.test.web.reactive.server.WebTestClient;
-import reactor.core.publisher.Mono;
 import reactor.test.StepVerifier;
 
 import java.math.BigDecimal;
 import java.time.Duration;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 @Slf4j
 @WebFluxTest(ProductController.class)
@@ -31,10 +32,10 @@ class ProductControllerTest {
 
         StepVerifier.create(productController.getProductById(productId))
                 .assertNext(product -> {
-                    assert product.id().equals(productId);
-                    assert product.name().equals("Product 1");
-                    assert product.price().equals(BigDecimal.valueOf(11.0));
-                    assert product.description().equals("Description for product 1");
+                    assertThat(product.id()).isEqualTo(productId);
+                    assertThat(product.name()).isEqualTo("Product 1");
+                    assertThat(product.price()).isEqualTo(BigDecimal.valueOf(11.0));
+                    assertThat(product.description()).isEqualTo("Description for product 1");
                 })
                 .verifyComplete();
     }
@@ -48,8 +49,8 @@ class ProductControllerTest {
                 .expectSubscription()
                 .expectNoEvent(Duration.ofMillis(500))
                 .assertNext(product -> {
-                    assert product.id().equals(productId);
-                    assert product.name().equals("Product 2");
+                    assertThat(product.id()).isEqualTo(productId);
+                    assertThat(product.name()).isEqualTo("Product 2");
                 })
                 .verifyComplete();
     }
@@ -57,19 +58,17 @@ class ProductControllerTest {
     @Test
     @DisplayName("Should verify time passage with VirtualTimeScheduler")
     void testGetProductById_VirtualTimeSchedulerVerification() {
-            Mono<Product> productMono = productController.getProductById(3L)
-                    .doOnSubscribe(s -> log.info("Subscribed at: {}", System.currentTimeMillis()));
-
-            StepVerifier.withVirtualTime(() -> productMono)
-                    .expectSubscription()
-                    .expectNoEvent(Duration.ofMillis(500))
-                    .assertNext(product -> {
-                        assert product.id().equals(3L);
-                        assert product.price().equals(BigDecimal.valueOf(13.0));
-                    })
-                    .verifyComplete();
-
-
+        // Publisher MUST be created inside the supplier — withVirtualTime swaps the
+        // schedulers only for sequences instantiated lazily within it (reactor-test docs)
+        StepVerifier.withVirtualTime(() -> productController.getProductById(3L)
+                        .doOnSubscribe(s -> log.info("Subscribed at: {}", System.currentTimeMillis())))
+                .expectSubscription()
+                .expectNoEvent(Duration.ofMillis(500))
+                .assertNext(product -> {
+                    assertThat(product.id()).isEqualTo(3L);
+                    assertThat(product.price()).isEqualTo(BigDecimal.valueOf(13.0));
+                })
+                .verifyComplete();
     }
 
     @Test
@@ -83,7 +82,9 @@ class ProductControllerTest {
     @Test
     @DisplayName("Should stream products with SSE")
     void testStreamProducts() {
-        StepVerifier.create(productController.streamProducts())
+        // Virtual time — 20 × 200ms would otherwise take ~4s of real time
+        StepVerifier.withVirtualTime(() -> productController.streamProducts())
+                .thenAwait(Duration.ofSeconds(4))
                 .expectNextCount(20)
                 .verifyComplete();
     }
@@ -98,9 +99,9 @@ class ProductControllerTest {
                 .expectBody(Product.class)
                 .consumeWith(result -> {
                     Product product = result.getResponseBody();
-                    assert product != null;
-                    assert product.id().equals(5L);
-                    assert product.name().equals("Product 5");
+                    assertThat(product).isNotNull();
+                    assertThat(product.id()).isEqualTo(5L);
+                    assertThat(product.name()).isEqualTo("Product 5");
                 });
     }
 
@@ -125,9 +126,7 @@ class ProductControllerTest {
                 .expectSubscription()
                 .expectNoEvent(Duration.ofMillis(499))
                 .expectNoEvent(Duration.ofMillis(1))
-                .assertNext(product -> {
-                    assert product.id().equals(productId);
-                })
+                .assertNext(product -> assertThat(product.id()).isEqualTo(productId))
                 .verifyComplete();
     }
 }

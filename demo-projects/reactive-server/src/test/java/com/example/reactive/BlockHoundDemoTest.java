@@ -8,8 +8,10 @@ import reactor.blockhound.BlockHound;
 import reactor.core.publisher.Mono;
 import reactor.core.scheduler.Schedulers;
 import reactor.test.StepVerifier;
+import reactor.util.retry.Retry;
 
 import java.time.Duration;
+import java.util.concurrent.TimeoutException;
 
 /**
  * BlockHound demo — detects blocking calls on non-blocking threads.

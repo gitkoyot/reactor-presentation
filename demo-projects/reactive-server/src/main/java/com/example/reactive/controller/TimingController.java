@@ -51,7 +51,7 @@ public class TimingController {
         return Mono.defer(() -> {
             Map<String, Object> threadInfo = new HashMap<>();
             threadInfo.put("name", threadName);
-            threadInfo.put("id", Thread.currentThread().getId());
+            threadInfo.put("id", Thread.currentThread().threadId());
             threadInfo.put("state", Thread.currentThread().getState().toString());
 
             Map<String, Object> response = new HashMap<>();

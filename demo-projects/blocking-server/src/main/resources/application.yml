@@ -2,6 +2,12 @@ server:
   port: 8081
   # Default Tomcat: 200 threads. That's the real-world config.
   # Difference shows when requests > 200.
+  tomcat:
+    # Defaults (max-connections=8192, accept-count=100) are below the 10,000-request
+    # step — connections would be refused/queued at the socket level and distort results.
+    # accept-count must cover the full 10,000-SYN burst arriving at once.
+    max-connections: 12000
+    accept-count: 10000
 
 spring:
   application:

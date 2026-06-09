@@ -1,12 +1,16 @@
 package com.example.client.blocking.runner;
 
 import lombok.extern.slf4j.Slf4j;
+import org.apache.hc.client5.http.impl.classic.HttpClients;
+import org.apache.hc.client5.http.impl.io.PoolingHttpClientConnectionManagerBuilder;
 import org.springframework.boot.CommandLineRunner;
+import org.springframework.http.client.HttpComponentsClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestTemplate;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
+import java.net.ConnectException;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.util.ArrayList;
@@ -26,7 +30,27 @@ public class DemoRunner implements CommandLineRunner {
     // Default Tomcat = 200 threads. Difference shows when requests > 200.
     private static final int[] SCALING_STEPS = {50, 200, 500, 1000, 2000, 5000, 10000};
 
-    private final RestTemplate restTemplate = new RestTemplate();
+    private final RestTemplate restTemplate = buildPooledRestTemplate();
+
+    /**
+     * RestTemplate over a pooled Apache HttpClient. The default factory
+     * (HttpURLConnection) caches only ~5 keep-alive connections per host — at
+     * 10,000 concurrent requests nearly every call opens a fresh TCP connection,
+     * the SYN storm overflows the server accept backlog (Windows replies RST) and
+     * retries amplify it. Pooling reuses connections across requests and scaling
+     * steps, same as the WebClient ConnectionProvider in reactive-client.
+     * Still 100% blocking — the calling thread waits for the response.
+     */
+    private static RestTemplate buildPooledRestTemplate() {
+        var connectionManager = PoolingHttpClientConnectionManagerBuilder.create()
+                .setMaxConnTotal(12000)
+                .setMaxConnPerRoute(12000)
+                .build();
+        var httpClient = HttpClients.custom()
+                .setConnectionManager(connectionManager)
+                .build();
+        return new RestTemplate(new HttpComponentsClientHttpRequestFactory(httpClient));
+    }
 
     @Override
     public void run(String... args) throws Exception {
@@ -50,21 +74,21 @@ public class DemoRunner implements CommandLineRunner {
         log.info("║" + center("Blocking: 200 Tomcat threads (default — queued when full)", 76) + "║");
         log.info("║" + center("Reactive: 4 event-loop threads (never blocked)", 76) + "║");
         log.info("╠" + "═".repeat(76) + "╣");
-        log.info(String.format("║ %-14s │ %16s │ %16s │ %16s    ║",
-                "Requests", "Blocking (wall)", "Reactive (wall)", "Speedup"));
+        log.info(String.format("║ %-9s │ %13s │ %7s │ %13s │ %7s │ %10s ║",
+                "Requests", "Blocking", "B fail", "Reactive", "R fail", "Speedup"));
         log.info("╟" + "─".repeat(76) + "╢");
 
         List<long[]> rows = new ArrayList<>();
 
         for (int n : SCALING_STEPS) {
-            long blockingWall = concurrentWallTime(BLOCKING_SERVER + "/api/products/", n);
-            long reactiveWall = concurrentWallTime(REACTIVE_SERVER + "/api/products/", n);
+            long[] blocking = concurrentWallTime(BLOCKING_SERVER + "/api/products/", n);
+            long[] reactive = concurrentWallTime(REACTIVE_SERVER + "/api/products/", n);
 
-            double speedup = reactiveWall > 0 ? (double) blockingWall / reactiveWall : 0;
-            rows.add(new long[]{n, blockingWall, reactiveWall});
+            double speedup = reactive[0] > 0 ? (double) blocking[0] / reactive[0] : 0;
+            rows.add(new long[]{n, blocking[0], blocking[1], reactive[0], reactive[1]});
 
-            log.info(String.format("║ %,14d │ %13d ms │ %13d ms │ %14.1fx    ║",
-                    n, blockingWall, reactiveWall, speedup));
+            log.info(String.format("║ %,9d │ %10d ms │ %7d │ %10d ms │ %7d │ %9.1fx ║",
+                    n, blocking[0], blocking[1], reactive[0], reactive[1], speedup));
         }
 
         log.info("╠" + "═".repeat(76) + "╣");
@@ -75,7 +99,7 @@ public class DemoRunner implements CommandLineRunner {
                         first[1], last[1], (double) last[1] / Math.max(1, first[1])), 76) + "║");
         log.info("║" + center(
                 String.format("Reactive: %dms → %dms (stays flat — threads never wait!)",
-                        first[2], last[2]), 76) + "║");
+                        first[3], last[3]), 76) + "║");
         log.info("╚" + "═".repeat(76) + "╝");
 
         // ── ASCII CHART ──
@@ -112,19 +136,23 @@ public class DemoRunner implements CommandLineRunner {
     }
 
     // ─────────────────────────────────────────────────────────────
-    private long concurrentWallTime(String baseUrl, int count) {
+    /** @return {wallTimeMs, failedRequests} */
+    private long[] concurrentWallTime(String baseUrl, int count) {
         // Client pool must match request count so CLIENT isn't the bottleneck
         ExecutorService executor = Executors.newFixedThreadPool(Math.min(count, 10000));
         CountDownLatch latch = new CountDownLatch(count);
 
+        AtomicLong errors = new AtomicLong(0);
+        AtomicLong retries = new AtomicLong(0);
         long wallStart = System.nanoTime();
 
         for (int i = 1; i <= count; i++) {
             final int id = (i % 50) + 1;
             executor.submit(() -> {
                 try {
-                    restTemplate.getForObject(baseUrl + id, String.class);
-                } catch (Exception ignored) {
+                    getWithRetry(baseUrl + id, retries);
+                } catch (Exception e) {
+                    errors.incrementAndGet();
                 } finally {
                     latch.countDown();
                 }
@@ -138,7 +166,42 @@ public class DemoRunner implements CommandLineRunner {
         }
         executor.shutdown();
 
-        return (System.nanoTime() - wallStart) / 1_000_000;
+        long wallTime = (System.nanoTime() - wallStart) / 1_000_000;
+        if (retries.get() > 0) {
+            log.info("      ↳ {} refused connects recovered by retry  [{}]", retries.get(), baseUrl);
+        }
+        return new long[]{wallTime, errors.get()};
+    }
+
+    /**
+     * GET with retry on "connection refused" only. Windows caps the listen backlog —
+     * under a connection storm some SYNs get RST; a short backoff recovers them.
+     */
+    private void getWithRetry(String url, AtomicLong retries) throws Exception {
+        int attempt = 0;
+        while (true) {
+            try {
+                restTemplate.getForObject(url, String.class);
+                return;
+            } catch (Exception e) {
+                if (!isConnectionRefused(e) || ++attempt >= 5) {
+                    throw e;
+                }
+                retries.incrementAndGet();
+                Thread.sleep(200L * attempt); // 200, 400, 600, 800 ms
+            }
+        }
+    }
+
+    private static boolean isConnectionRefused(Throwable e) {
+        Throwable t = e;
+        while (t != null) {
+            if (t instanceof ConnectException) {
+                return true;
+            }
+            t = (t.getCause() != t) ? t.getCause() : null;
+        }
+        return false;
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -148,6 +211,7 @@ public class DemoRunner implements CommandLineRunner {
         ExecutorService executor = Executors.newFixedThreadPool(streamCount);
         CountDownLatch latch = new CountDownLatch(streamCount);
         AtomicLong totalEvents = new AtomicLong(0);
+        AtomicLong failedStreams = new AtomicLong(0);
 
         long wallStart = System.nanoTime();
 
@@ -169,7 +233,7 @@ public class DemoRunner implements CommandLineRunner {
                         }
                     }
                 } catch (Exception e) {
-                    // stream ended or connection error
+                    failedStreams.incrementAndGet(); // connection error / premature end
                 } finally {
                     latch.countDown();
                 }
@@ -186,6 +250,9 @@ public class DemoRunner implements CommandLineRunner {
         long wallTime = (System.nanoTime() - wallStart) / 1_000_000;
         log.info(String.format("  %-20s %d streams × 20 events = %d total | wall: %d ms",
                 serverName + ":", streamCount, totalEvents.get(), wallTime));
+        if (failedStreams.get() > 0) {
+            log.warn("  ⚠ {}/{} streams FAILED against {}", failedStreams.get(), streamCount, url);
+        }
         return wallTime;
     }
 
@@ -197,18 +264,18 @@ public class DemoRunner implements CommandLineRunner {
         log.info("");
 
         long maxVal = rows.stream()
-                .mapToLong(r -> Math.max(r[1], r[2]))
+                .mapToLong(r -> Math.max(r[1], r[3]))
                 .max().orElse(1);
         int barWidth = 50;
 
         for (long[] row : rows) {
             int bLen = (int) (row[1] * barWidth / maxVal);
-            int rLen = (int) (row[2] * barWidth / maxVal);
+            int rLen = (int) (row[3] * barWidth / maxVal);
 
             log.info(String.format("  %4d req  BLK │%-" + barWidth + "s│ %d ms",
                     row[0], "█".repeat(Math.max(1, bLen)), row[1]));
             log.info(String.format("           RCT │%-" + barWidth + "s│ %d ms",
-                    "▓".repeat(Math.max(1, rLen)), row[2]));
+                    "▓".repeat(Math.max(1, rLen)), row[3]));
             log.info("");
         }
     }
